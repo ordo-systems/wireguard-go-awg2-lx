@@ -6,6 +6,7 @@
 package device
 
 import (
+	"runtime"
 	"sync"
 
 	"github.com/sagernet/sing/common/buf"
@@ -124,8 +125,17 @@ func (device *Device) GetInboundElement() *QueueInboundElement {
 	return device.pool.inboundElements.Get().(*QueueInboundElement)
 }
 
+// inboundUsesWaitPool selects the allocator for the full lifetime of a packet.
+func (device *Device) inboundUsesWaitPool() bool {
+	if runtime.GOOS == "ios" {
+		// iOS can change the default for future devices.
+		return device.pool.messageBuffers.hasAccounting()
+	}
+	return PreallocatedBuffersPerPool != 0
+}
+
 func (device *Device) PutInboundElement(elem *QueueInboundElement) {
-	if PreallocatedBuffersPerPool != 0 {
+	if device.inboundUsesWaitPool() {
 		device.PutMessageBuffer((*[MaxMessageSize]byte)(elem.buffer))
 	} else {
 		_ = buf.Put(elem.buffer)

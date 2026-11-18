@@ -247,7 +247,7 @@ func (device *Device) RoutineReceiveIncoming(
 				// create work element
 				peer := value.peer
 				elem := device.GetInboundElement()
-				if PreallocatedBuffersPerPool != 0 {
+				if device.inboundUsesWaitPool() {
 					// Keep the device-wide buffer budget on bounded platforms.
 					elem.buffer = bufsArrs[i][:]
 					elem.packet = packet
@@ -657,7 +657,7 @@ func (peer *Peer) processInboundContainer(elemsContainer *QueueInboundElementsCo
 
 		// TUN needs the transport header as headroom, not the AWG prefix.
 		start := 0
-		if PreallocatedBuffersPerPool != 0 {
+		if device.inboundUsesWaitPool() {
 			start = int(elem.padding)
 		}
 		scratch = append(scratch, elem.buffer[start:start+MessageTransportOffsetContent+len(elem.packet)])
