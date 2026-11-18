@@ -125,7 +125,11 @@ func (device *Device) GetInboundElement() *QueueInboundElement {
 }
 
 func (device *Device) PutInboundElement(elem *QueueInboundElement) {
-	_ = buf.Put(elem.buffer)
+	if PreallocatedBuffersPerPool != 0 {
+		device.PutMessageBuffer((*[MaxMessageSize]byte)(elem.buffer))
+	} else {
+		_ = buf.Put(elem.buffer)
+	}
 	elem.clearPointers()
 	device.pool.inboundElements.Put(elem)
 }

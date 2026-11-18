@@ -35,7 +35,7 @@ type QueueInboundElement struct {
 	counter  uint64
 	keypair  *Keypair
 	endpoint conn.Endpoint
-	// Transport prefix length on the wire; the queued buffer starts at the header.
+	// Transport prefix length on the wire; only bounded-pool buffers retain it.
 	padding uint32
 }
 
@@ -247,11 +247,19 @@ func (device *Device) RoutineReceiveIncoming(
 				// create work element
 				peer := value.peer
 				elem := device.GetInboundElement()
-				// Keep the UDP/GRO read slot. Only the classified, unmasked
-				// transport message crosses into the decryption queue.
-				elem.buffer = buf.Get(len(packet))
-				copy(elem.buffer, packet)
-				elem.packet = elem.buffer
+				if PreallocatedBuffersPerPool != 0 {
+					// Keep the device-wide buffer budget on bounded platforms.
+					elem.buffer = bufsArrs[i][:]
+					elem.packet = packet
+					bufsArrs[i] = device.GetMessageBuffer()
+					bufs[i] = bufsArrs[i][:]
+				} else {
+					// Keep the UDP/GRO read slot. Only the classified, unmasked
+					// transport message crosses into the decryption queue.
+					elem.buffer = buf.Get(len(packet))
+					copy(elem.buffer, packet)
+					elem.packet = elem.buffer
+				}
 				elem.keypair = keypair
 				elem.endpoint = endpoints[i]
 				elem.counter = 0
@@ -648,7 +656,11 @@ func (peer *Peer) processInboundContainer(elemsContainer *QueueInboundElementsCo
 		}
 
 		// TUN needs the transport header as headroom, not the AWG prefix.
-		scratch = append(scratch, elem.buffer[:MessageTransportOffsetContent+len(elem.packet)])
+		start := 0
+		if PreallocatedBuffersPerPool != 0 {
+			start = int(elem.padding)
+		}
+		scratch = append(scratch, elem.buffer[start:start+MessageTransportOffsetContent+len(elem.packet)])
 	}
 
 	peer.rxBytes.Add(rxBytesLen)
