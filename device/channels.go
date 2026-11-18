@@ -99,7 +99,6 @@ func (device *Device) flushInboundQueue(c <-chan *QueueInboundElementsContainer)
 		case elemsContainer := <-c:
 			elemsContainer.filling.Wait()
 			for _, elem := range elemsContainer.elems {
-				device.PutMessageBuffer(elem.buffer)
 				device.PutInboundElement(elem)
 			}
 			device.PutInboundElementsContainer(elemsContainer)

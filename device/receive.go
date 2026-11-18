@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/wireguard-go/conn"
 	"golang.org/x/crypto/chacha20"
 	"golang.org/x/crypto/chacha20poly1305"
@@ -29,13 +30,12 @@ type QueueHandshakeElement struct {
 }
 
 type QueueInboundElement struct {
-	buffer   *[MaxMessageSize]byte
+	buffer   []byte
 	packet   []byte
 	counter  uint64
 	keypair  *Keypair
 	endpoint conn.Endpoint
-	// lx: AmneziaWG — the transport padding (s4) this datagram arrived with;
-	// packet is buffer[padding:...], the padding is left in place.
+	// Transport prefix length on the wire; the queued buffer starts at the header.
 	padding uint32
 }
 
@@ -247,8 +247,11 @@ func (device *Device) RoutineReceiveIncoming(
 				// create work element
 				peer := value.peer
 				elem := device.GetInboundElement()
-				elem.packet = packet
-				elem.buffer = bufsArrs[i]
+				// Keep the UDP/GRO read slot. Only the classified, unmasked
+				// transport message crosses into the decryption queue.
+				elem.buffer = buf.Get(len(packet))
+				copy(elem.buffer, packet)
+				elem.packet = elem.buffer
 				elem.keypair = keypair
 				elem.endpoint = endpoints[i]
 				elem.counter = 0
@@ -260,8 +263,6 @@ func (device *Device) RoutineReceiveIncoming(
 					elemsByPeer[peer] = elemsForPeer
 				}
 				elemsForPeer.elems = append(elemsForPeer.elems, elem)
-				bufsArrs[i] = device.GetMessageBuffer()
-				bufs[i] = bufsArrs[i][:]
 				continue
 
 			// otherwise it is a fixed size & handshake related packet
@@ -314,7 +315,6 @@ func (device *Device) RoutineReceiveIncoming(
 				device.queue.decryption.c <- elemsContainer
 			} else {
 				for _, elem := range elemsContainer.elems {
-					device.PutMessageBuffer(elem.buffer)
 					device.PutInboundElement(elem)
 				}
 				device.PutInboundElementsContainer(elemsContainer)
@@ -647,9 +647,8 @@ func (peer *Peer) processInboundContainer(elemsContainer *QueueInboundElementsCo
 			continue
 		}
 
-		// the plaintext sits behind the (untouched) padding and the header
-		start := int(elem.padding)
-		scratch = append(scratch, elem.buffer[start:start+MessageTransportOffsetContent+len(elem.packet)])
+		// TUN needs the transport header as headroom, not the AWG prefix.
+		scratch = append(scratch, elem.buffer[:MessageTransportOffsetContent+len(elem.packet)])
 	}
 
 	peer.rxBytes.Add(rxBytesLen)
@@ -669,7 +668,6 @@ func (peer *Peer) processInboundContainer(elemsContainer *QueueInboundElementsCo
 		}
 	}
 	for _, elem := range elems {
-		device.PutMessageBuffer(elem.buffer)
 		device.PutInboundElement(elem)
 	}
 }
